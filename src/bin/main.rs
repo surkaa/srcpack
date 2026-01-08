@@ -6,7 +6,14 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(
+    name = "srcpack",
+    author = "SurKaa",
+    version,
+    about = "A fast CLI tool to pack source code respecting .gitignore",
+    long_about = "srcpack is a utility to compress source code directories into zip files. \
+                  It automatically reads .gitignore files to exclude build artifacts like target/, node_modules/, etc."
+)]
 struct Args {
     /// Root directory to scan
     #[arg(default_value = ".")]
@@ -21,7 +28,9 @@ struct Args {
     dry_run: bool,
 
     /// Show the top N the largest files (only works in dry-run mode or after compression)
-    #[arg(long, default_value_t = 0)]
+    ///
+    /// This option will list the largest files found to help you identify what is taking up space.
+    #[arg(long, default_value_t = 0, requires = "dry_run")]
     top: usize,
 }
 
@@ -49,12 +58,6 @@ fn main() -> Result<()> {
 
     scan_spinner.finish_with_message(format!("Found {} files.", files.len()));
 
-    if args.top > 0 && !args.dry_run {
-        // return an error if --top is used without --dry-run
-        return Err(anyhow::anyhow!(
-            "--top option can only be used with --dry-run"
-        ));
-    }
 
     // --- Dry Run / Analysis Mode ---
     if args.dry_run {
@@ -121,9 +124,11 @@ fn main() -> Result<()> {
             let relative_path = path_buf.strip_prefix(&root_path).unwrap_or(path_buf);
             let relative_path_str = relative_path.to_string_lossy().to_string();
 
+            let display_name = truncate(&relative_path_str, 35);
+
             bar.set_message(format!(
                 "{} | Total: {}",
-                relative_path_str,
+                display_name,
                 format_size(total_size)
             ));
 
@@ -170,4 +175,22 @@ fn format_size(bytes: u64) -> String {
     } else {
         format!("{} B", bytes)
     }
+}
+
+fn truncate(s: &str, max_chars: usize) -> String {
+    // Get the total number of characters (not bytes)
+    let char_count = s.chars().count();
+
+    if char_count <= max_chars {
+        return s.to_string();
+    }
+
+    // Calculate the starting character position that needs to be retained
+    let chars_to_keep = max_chars.saturating_sub(3);
+    let skip_count = char_count.saturating_sub(chars_to_keep);
+
+    // Collect the remaining characters
+    let kept_str: String = s.chars().skip(skip_count).collect();
+
+    format!("...{}", kept_str)
 }

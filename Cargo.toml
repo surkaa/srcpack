@@ -24,7 +24,6 @@ path = "src/bin/main.rs"
 # 核心业务依赖
 ignore = "=0.4.23"
 zip = { version = "7", default-features = false, features = ["deflate-flate2-zlib-rs", "time"] }
-globset = "=0.4.16" # 避免edition为2024的版本引入不兼容问题
 
 # 命令行与工具依赖
 clap = { version = "4.4", features = ["derive"] } # 命令行参数解析

@@ -27,6 +27,14 @@ srcpack path/to/project
 # Specify output filename
 srcpack --output my-backup.zip
 
+# Manually exclude specific patterns (in addition to .gitignore)
+srcpack --exclude "*.mp4" --exclude "secrets/"
+
+# Compression Levels
+srcpack --store   # Store only (0 compression, fastest)
+srcpack --fast    # Fast compression
+srcpack --best    # Best compression (smallest size, slower)
+
 # Analyze mode: Dry run to list files without zipping
 srcpack --dry-run
 

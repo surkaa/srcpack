@@ -19,6 +19,10 @@ struct Args {
     /// 预演模式：只打印文件列表，不进行压缩
     #[arg(long, short = 'd')]
     dry_run: bool,
+
+    /// 结束后显示最大的 N 个文件
+    #[arg(long, default_value_t = 10)]
+    top: usize,
 }
 
 fn main() -> Result<()> {
@@ -56,68 +60,78 @@ fn main() -> Result<()> {
             let display_path = file.strip_prefix(&root_path).unwrap_or(&file);
             println!("{}", display_path.display());
         }
-    } else {
-        // 决定输出文件名
-        let output_path = match args.output {
-            Some(p) => p,
-            None => {
-                // 如果没有指定输出文件名，使用目录名 + .zip
-                let dir_name = root_path
-                    .file_name()
-                    .unwrap_or_else(|| std::ffi::OsStr::new("archive"))
-                    .to_string_lossy();
-                PathBuf::from(format!("{}.zip", dir_name))
-            }
-        };
+        return Ok(());
+    }
 
-        println!("准备压缩到: {:?}", output_path.file_name().unwrap());
+    let output_path = match args.output {
+        Some(p) => p,
+        None => {
+            let dir_name = root_path
+                .file_name()
+                .unwrap_or_else(|| std::ffi::OsStr::new("archive"))
+                .to_string_lossy();
+            PathBuf::from(format!("{}.zip", dir_name))
+        }
+    };
 
-        // 2. 设置压缩时的进度条
-        let bar = ProgressBar::new(files.len() as u64);
-        bar.set_style(
-            ProgressStyle::with_template(
-                // 优化了模板：把 msg 放到了最后，防止文件名过长破坏对齐
-                "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {percent}% (ETA: {eta}) {msg}",
-            )?
+    println!("准备压缩到: {:?}", output_path.file_name().unwrap());
+
+    // 设置压缩时的进度条
+    let bar = ProgressBar::new(files.len() as u64);
+    bar.set_style(
+        ProgressStyle::with_template(
+            // [耗时] [进度条] 进度/总数 百分比 (预计剩余时间) 当前文件
+            "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {percent}% (ETA: {eta}) {msg}",
+        )?
             .progress_chars("##-"),
-        );
+    );
 
-        let mut max_path: Option<String> = None;
-        let mut max_size: usize = 0;
+    // 内存中保存 Top N 最大文件 (大小, 相对路径字符串)
+    // 预分配容量稍微大一点避免频繁扩容
+    let mut top_files: Vec<(usize, String)> = Vec::with_capacity(args.top + 1);
 
-        pack_files(
-            &files,
-            &root_path,
-            &output_path,
-            |path_buf, current_size, total_size| {
-                if current_size > max_size {
-                    max_size = current_size;
-                    max_path = Some(
-                        path_buf.clone()
-                            .strip_prefix(&root_path)
-                            .unwrap_or(path_buf)
-                            .to_string_lossy()
-                            .to_string(),
-                    );
+    pack_files(
+        &files,
+        &root_path,
+        &output_path,
+        |path_buf, current_size, total_size| {
+            let relative_path = path_buf.strip_prefix(&root_path).unwrap_or(path_buf);
+            let relative_path_str = relative_path.to_string_lossy().to_string();
+
+            if args.top > 0 {
+                top_files.push((current_size, relative_path_str.clone()));
+                // 降序排序：大文件在前
+                top_files.sort_by(|a, b| b.0.cmp(&a.0));
+                // 保持只有 Top N
+                if top_files.len() > args.top {
+                    top_files.truncate(args.top);
                 }
+            }
 
-                // 格式化一下大小
-                let size_str = format_size(total_size);
+            bar.set_message(format!(
+                "{} | 总计: {}",
+                relative_path_str,
+                format_size(total_size)
+            ));
 
-                bar.set_message(format!(
-                    "- (总计: {}) 最大文件: {:?} ({})",
-                    size_str,
-                    max_path,
-                    format_size(max_size)
-                ));
+            bar.inc(1);
+        },
+    )?;
 
-                bar.inc(1);
-            },
-        )?;
+    bar.finish_with_message("压缩完成！");
 
-        bar.finish();
+    println!("\n✨ 成功！文件已保存至: {}", output_path.display());
 
-        println!("成功！文件已保存至: {}", output_path.display());
+    if !top_files.is_empty() {
+        println!("\n📊 占用空间最大的 {} 个文件 (建议检查是否需要加入 .gitignore):", top_files.len());
+        println!("{:-<60}", ""); // 分割线
+        println!("{:<10} | {}", "大小", "文件路径");
+        println!("{:-<60}", "");
+
+        for (size, path) in top_files {
+            println!("{:<12} | {}", format_size(size), path);
+        }
+        println!("{:-<60}", "");
     }
 
     Ok(())

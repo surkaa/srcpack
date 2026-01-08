@@ -4,6 +4,8 @@ use std::fs::File;
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 use zip::write::FileOptions;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 /// Configuration for the file scanning process.
 pub struct ScanConfig {
@@ -127,29 +129,44 @@ where
     let buf_writer = BufWriter::with_capacity(1024 * 1024, file);
     let mut zip = zip::ZipWriter::new(buf_writer);
 
-    // Set compression options: Default to Deflated (standard compression)
-    let options = FileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated)
-        .unix_permissions(0o755) // Set generic permissions to avoid read-only issues on unzip
-        .large_file(true); // Enable ZIP64 for large files
-
     let mut total_processed_size: u64 = 0;
 
     for path in files {
-        // 1. Calculate relative path (e.g., "src/main.rs")
+        // Calculate relative path (e.g., "src/main.rs")
         // If calculation fails (edge case), fallback to the full path
         let relative_path = path.strip_prefix(root_path).unwrap_or(path);
 
-        // 2. Normalize path separators (Windows "\" -> Zip "/")
+        // Normalize path separators (Windows "\" -> Zip "/")
         // Crucial for cross-platform compatibility
         let path_str = relative_path.to_string_lossy().replace('\\', "/");
 
-        // 3. Start a new file in the Zip archive
-        zip.start_file(path_str, options)?;
-
-        // 4. Read file content and stream it into the Zip
+        // Read file content and stream it into the Zip
         let mut f = File::open(path)?;
         let metadata = f.metadata()?;
+
+        // Preserve original file permissions if possible
+        let permissions = if cfg!(unix) {
+            #[cfg(unix)]
+            {
+                metadata.permissions().mode()
+            }
+            #[cfg(not(unix))]
+            {
+                0o644 // Windows/Other fallback
+            }
+        } else {
+            0o644
+        };
+
+        // Set compression options: Default to Deflated (standard compression)
+        let options = FileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .unix_permissions(permissions) // Set generic permissions to avoid read-only issues on unzip
+            .large_file(true); // Enable ZIP64 for large files
+
+        // Start a new file in the Zip archive
+        zip.start_file(path_str, options)?;
+
         let current_file_size = metadata.len();
 
         // Stream copy: reads from file and writes to zip buffer directly

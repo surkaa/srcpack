@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
-use srcpack::{ScanConfig, pack_files, scan_files};
-use std::path::PathBuf;
+use srcpack::{pack_files, scan_files, ScanConfig};
+use std::path::{PathBuf};
 use std::time::Duration;
 
 #[derive(Parser, Debug)]
@@ -76,21 +76,66 @@ fn main() -> Result<()> {
         let bar = ProgressBar::new(files.len() as u64);
         bar.set_style(
             ProgressStyle::with_template(
-                // 耗时 [进度条] 当前/总数 信息 预计剩余时间
-                "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg} (ETA: {eta})",
+                // 优化了模板：把 msg 放到了最后，防止文件名过长破坏对齐
+                "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {percent}% (ETA: {eta}) {msg}",
             )?
             .progress_chars("##-"),
         );
 
-        // 调用压缩，并传入闭包更新进度条
-        pack_files(&files, &root_path, &output_path, || {
-            bar.inc(1); // 每处理一个文件，进度条+1
-        })?;
+        let mut max_path: Option<String> = None;
+        let mut max_size: usize = 0;
 
-        bar.finish_with_message("压缩完成！");
+        pack_files(
+            &files,
+            &root_path,
+            &output_path,
+            |path_buf, current_size, total_size| {
+                if current_size > max_size {
+                    max_size = current_size;
+                    max_path = Some(
+                        path_buf.clone()
+                            .strip_prefix(&root_path)
+                            .unwrap_or(path_buf)
+                            .to_string_lossy()
+                            .to_string(),
+                    );
+                }
+
+                // 格式化一下大小
+                let size_str = format_size(total_size);
+
+                bar.set_message(format!(
+                    "- (总计: {}) 最大文件: {:?} ({})",
+                    size_str,
+                    max_path,
+                    format_size(max_size)
+                ));
+
+                bar.inc(1);
+            },
+        )?;
+
+        bar.finish();
 
         println!("成功！文件已保存至: {}", output_path.display());
     }
 
     Ok(())
+}
+
+// 简单的辅助函数：格式化字节大小
+fn format_size(bytes: usize) -> String {
+    const KB: usize = 1024;
+    const MB: usize = 1024 * 1024;
+    const GB: usize = 1024 * 1024 * 1024;
+
+    if bytes >= GB {
+        format!("{:.2} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.2} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.2} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
 }

@@ -1,8 +1,8 @@
+use anyhow::{Context, Result};
 use ignore::WalkBuilder;
 use std::fs::File;
 use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
-use anyhow::{Context, Result};
 use zip::write::FileOptions;
 
 /// 扫描配置
@@ -31,7 +31,8 @@ pub fn scan_files(config: &ScanConfig) -> Result<Vec<PathBuf>> {
     // WalkBuilder 是 ignore crate 提供的核心构建器
     let walker = WalkBuilder::new(&config.root_path)
         .standard_filters(true) // 自动读取 .gitignore, .git/info/exclude 等
-        .add_custom_ignore_filename(".ignore") // 允许用户自定义 .ignore 文件
+        .require_git(false) // 不强制要求在 git 仓库内
+        .hidden(false) // 包含隐藏文件
         .build();
 
     for result in walker {
@@ -70,10 +71,10 @@ pub fn pack_files<F>(
     files: &[PathBuf],
     root_path: &Path,
     output_path: &Path,
-    on_progress: F
+    mut on_progress: F,
 ) -> Result<()>
 where
-    F: Fn()
+    F: FnMut(&PathBuf, usize, usize) -> (),
 {
     let file = File::create(output_path)
         .with_context(|| format!("无法创建输出文件: {:?}", output_path))?;
@@ -88,6 +89,7 @@ where
 
     // 用于读取文件内容的缓冲区
     let mut buffer = Vec::new();
+    let mut total_processed_size: usize = 0;
 
     for path in files {
         // 1. 计算相对路径 (例如: "src/main.rs")
@@ -105,9 +107,13 @@ where
         let mut f = File::open(path)?;
         buffer.clear();
         f.read_to_end(&mut buffer)?;
+
+        let current_file_size = buffer.len(); // 获取当前文件大小
         zip.write_all(&buffer)?;
 
-        on_progress();
+        total_processed_size += current_file_size;
+
+        on_progress(path, current_file_size, total_processed_size);
     }
 
     // 完成写入
@@ -120,7 +126,7 @@ fn is_build_artifact(path: &Path) -> bool {
     // 检查路径组件中是否包含常见的构建目录名称
     for component in path.components() {
         if let Some(s) = component.as_os_str().to_str() {
-            if s == "node_modules" || s == "target" || s == "build" || s == "dist" {
+            if s == "node_modules" || s == "target" || s == "build" || s == "dist" || s == ".git" || s == ".idea" || s == ".vscode" {
                 return true;
             }
         }

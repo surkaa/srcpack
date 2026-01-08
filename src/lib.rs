@@ -7,6 +7,7 @@ use zip::write::FileOptions;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use ignore::overrides::OverrideBuilder;
+use zip::CompressionMethod;
 
 /// Configuration for the file scanning process.
 pub struct ScanConfig {
@@ -24,6 +25,14 @@ impl ScanConfig {
             exclude_patterns: excludes,
         }
     }
+}
+
+pub struct PackConfig {
+    pub root_path: PathBuf,
+    pub output_path: PathBuf,
+    pub compression_method: CompressionMethod,
+    // None Use the default, some(0-9) to specify the level
+    pub compression_level: Option<i32>,
 }
 
 /// Scans the directory specified in the configuration and returns a list of files to include.
@@ -44,7 +53,7 @@ impl ScanConfig {
 /// ```no_run
 /// use srcpack::{ScanConfig, scan_files};
 ///
-/// let config = ScanConfig::new(".");
+/// let config = ScanConfig::new(".", vec![String::from("*.mp4")]);
 /// match scan_files(&config) {
 ///     Ok(files) => println!("Found {} files respecting .gitignore", files.len()),
 ///     Err(e) => eprintln!("Error scanning directory: {}", e),
@@ -115,41 +124,52 @@ pub fn scan_files(config: &ScanConfig) -> Result<Vec<PathBuf>> {
 /// # Example
 ///
 /// ```no_run
-/// use srcpack::{pack_files, ScanConfig, scan_files};
+/// use srcpack::{pack_files, ScanConfig, scan_files, PackConfig};
 /// use std::path::Path;
 ///
 /// let root = Path::new(".");
-/// let config = ScanConfig::new(root);
+/// let config = ScanConfig::new(root, vec![]);
 /// let files = scan_files(&config).unwrap(); // Get list of files first
 /// let output = Path::new("backup.zip");
+/// let pack_config = PackConfig {
+///    root_path: root.to_path_buf(),
+///    output_path: output.to_path_buf(),
+///    compression_method: zip::CompressionMethod::Deflated,
+///    compression_level: None,
+/// };
 ///
 /// // Pack the files with a simple progress closure
-/// pack_files(&files, root, output, |path, size, total| {
+/// pack_files(&files, &pack_config, |path, size, total| {
 ///     println!("Packed {:?} ({} bytes)", path, size);
 /// }).expect("Failed to pack files");
 /// ```
 pub fn pack_files<F>(
     files: &[PathBuf],
-    root_path: &Path,
-    output_path: &Path,
+    config: &PackConfig,
     mut on_progress: F,
 ) -> Result<()>
 where
     F: FnMut(&PathBuf, u64, u64) -> (),
 {
-    let file = File::create(output_path)
-        .with_context(|| format!("Failed to create output file: {:?}", output_path))?;
+    let file = File::create(&config.output_path)
+        .with_context(|| format!("Failed to create output file: {:?}", &config.output_path))?;
 
     // Use a buffered writer to improve file I/O performance
     let buf_writer = BufWriter::with_capacity(1024 * 1024, file);
     let mut zip = zip::ZipWriter::new(buf_writer);
+
+    // Set compression options: Default to Deflated (standard compression)
+    let options = FileOptions::default()
+        .compression_method(CompressionMethod::Deflated)
+        .compression_level(config.compression_level)
+        .large_file(true); // Enable ZIP64 for large files
 
     let mut total_processed_size: u64 = 0;
 
     for path in files {
         // Calculate relative path (e.g., "src/main.rs")
         // If calculation fails (edge case), fallback to the full path
-        let relative_path = path.strip_prefix(root_path).unwrap_or(path);
+        let relative_path = path.strip_prefix(&config.root_path).unwrap_or(path);
 
         // Normalize path separators (Windows "\" -> Zip "/")
         // Crucial for cross-platform compatibility
@@ -173,14 +193,8 @@ where
             0o644
         };
 
-        // Set compression options: Default to Deflated (standard compression)
-        let options = FileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated)
-            .unix_permissions(permissions) // Set generic permissions to avoid read-only issues on unzip
-            .large_file(true); // Enable ZIP64 for large files
-
         // Start a new file in the Zip archive
-        zip.start_file(path_str, options)?;
+        zip.start_file(path_str, options.clone().unix_permissions(permissions))?;
 
         let current_file_size = metadata.len();
 
@@ -349,8 +363,12 @@ mod tests {
         // 3. Pack (Test the pack_files function)
         pack_files(
             &files,
-            root,
-            &output_zip_path,
+            &PackConfig {
+                root_path: root.to_path_buf(),
+                output_path: output_zip_path.clone(),
+                compression_method: CompressionMethod::Deflated,
+                compression_level: None,
+            },
             |_, _, _| {}, // Empty progress callback
         )
         .expect("Packing failed");
@@ -396,5 +414,72 @@ mod tests {
         // The `temp_dir` object (from tempfile crate) automatically deletes
         // the directory and all contents when it goes out of scope here.
         // No manual deletion needed.
+    }
+
+    #[test]
+    fn test_manual_exclude_patterns() {
+        // 1. Setup
+        let temp_dir = tempdir().unwrap();
+        let root = temp_dir.path();
+
+        // 2. Create a mixed environment
+        // Files that should REMAIN
+        create_test_file(root, "src/main.rs", b"code");
+        create_test_file(root, "assets/logo.png", b"image");
+        create_test_file(root, "docs/readme.txt", b"docs");
+
+        // Files that should be EXCLUDED
+        create_test_file(root, "assets/demo.mp4", b"heavy video"); // Exclude by extension
+        create_test_file(root, "secrets/api_key.txt", b"super secret"); // Exclude by directory
+        create_test_file(root, "secrets/nested/config.yaml", b"nested secret"); // Exclude by directory (deep)
+        create_test_file(root, "backup.log", b"log file"); // Exclude by exact name
+
+        // 3. Configure with Excludes
+        // logic: user passes "pattern", code converts to "!pattern" for ignore crate
+        let excludes = vec![
+            "*.mp4".to_string(),   // Pattern 1: Glob extension
+            "secrets".to_string(), // Pattern 2: Directory name
+            "*.log".to_string(),   // Pattern 3: Glob extension
+        ];
+
+        let config = ScanConfig::new(root, excludes);
+
+        // 4. Execute Scan
+        let files = scan_files(&config).expect("Scan failed");
+
+        // 5. Verify results
+        let relative_paths: Vec<String> = files
+            .iter()
+            .map(|p| {
+                p.strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+
+        // --- Positive Assertions (What should be there) ---
+        assert!(relative_paths.contains(&"src/main.rs".to_string()), "Standard file should be present");
+        assert!(relative_paths.contains(&"assets/logo.png".to_string()), "Non-excluded asset should be present");
+        assert!(relative_paths.contains(&"docs/readme.txt".to_string()), "Docs should be present");
+
+        // --- Negative Assertions (What should be gone) ---
+        // Verify *.mp4 is gone
+        assert!(
+            !relative_paths.iter().any(|p| p.ends_with(".mp4")),
+            "Failed to exclude .mp4 files"
+        );
+
+        // Verify secrets directory is gone (including nested files)
+        assert!(
+            !relative_paths.iter().any(|p| p.starts_with("secrets/")),
+            "Failed to exclude secrets directory"
+        );
+
+        // Verify *.log is gone
+        assert!(
+            !relative_paths.iter().any(|p| p.ends_with(".log")),
+            "Failed to exclude .log files"
+        );
     }
 }

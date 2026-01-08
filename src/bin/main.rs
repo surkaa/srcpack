@@ -1,9 +1,10 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
-use srcpack::{ScanConfig, pack_files, scan_files};
+use srcpack::{ScanConfig, pack_files, scan_files, PackConfig};
 use std::path::PathBuf;
 use std::time::Duration;
+use zip::CompressionMethod;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -36,6 +37,26 @@ struct Args {
     /// Manually exclude patterns (e.g. "*.mp4", "secrets/")
     #[arg(long, short = 'x')]
     exclude: Vec<String>,
+
+    /// Compression method
+    #[command(flatten)]
+    compression: CompressionArgs,
+}
+
+#[derive(clap::Args, Debug)]
+#[group(required = false, multiple = false)] // 这一组参数互斥
+struct CompressionArgs {
+    /// Store only (no compression). Fastest, but largest file size.
+    #[arg(long)]
+    store: bool,
+
+    /// Fast compression. Sacrifices some compression ratio for speed.
+    #[arg(long)]
+    fast: bool,
+
+    /// Best compression. Smallest file size, but takes longer.
+    #[arg(long)]
+    best: bool,
 }
 
 fn main() -> Result<()> {
@@ -109,6 +130,32 @@ fn main() -> Result<()> {
         }
     };
 
+    let (method, level) = if args.compression.store {
+        (CompressionMethod::Stored, None)
+    } else if args.compression.fast {
+        (CompressionMethod::Deflated, Some(1)) // Level 1 = Fastest Deflate
+    } else if args.compression.best {
+        (CompressionMethod::Deflated, Some(9)) // Level 9 = Best Deflate
+    } else {
+        (CompressionMethod::Deflated, Some(6)) // Default level
+    };
+
+    let pack_config = PackConfig {
+        root_path: root_path.clone(),
+        output_path: output_path.clone(),
+        compression_method: method,
+        compression_level: level,
+    };
+
+    println!("Compressing to: {:?}", output_path.file_name().unwrap());
+    if args.compression.store {
+        println!("Mode: Store (No Compression)");
+    } else if args.compression.fast {
+        println!("Mode: Fast Compression");
+    } else if args.compression.best {
+        println!("Mode: Best Compression");
+    }
+
     println!("Compressing to: {:?}", output_path.file_name().unwrap());
 
     let bar = ProgressBar::new(files.len() as u64);
@@ -121,8 +168,7 @@ fn main() -> Result<()> {
 
     pack_files(
         &files,
-        &root_path,
-        &output_path,
+        &pack_config,
         |path_buf, _, total_size| {
             let relative_path = path_buf.strip_prefix(&root_path).unwrap_or(path_buf);
             let relative_path_str = relative_path.to_string_lossy().to_string();

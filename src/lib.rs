@@ -173,10 +173,196 @@ fn is_build_artifact(path: &Path) -> bool {
     // Check if the path component contains common build directory names
     for component in path.components() {
         if let Some(s) = component.as_os_str().to_str() {
-            if s == "node_modules" || s == "target" || s == "build" || s == "dist" || s == ".git" || s == ".idea" || s == ".vscode" {
+            if s == "node_modules"
+                || s == "target"
+                || s == "build"
+                || s == "dist"
+                || s == ".git"
+                || s == ".idea"
+                || s == ".vscode"
+            {
                 return true;
             }
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::{self, File};
+    use std::io::{Read, Write};
+    use tempfile::tempdir;
+    use zip::ZipArchive;
+
+    /// Helper function to create a file with specific content
+    fn create_test_file(dir: &Path, name: &str, content: &[u8]) {
+        let path = dir.join(name);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        let mut f = File::create(path).unwrap();
+        f.write_all(content).unwrap();
+    }
+
+    #[test]
+    fn test_scan_filtering_logic() {
+        // 1. Setup a temporary environment
+        let temp_dir = tempdir().unwrap();
+        let root = temp_dir.path();
+
+        // 2. Create a mixed file structure (valid source code vs artifacts)
+
+        // Valid files
+        create_test_file(root, "src/main.rs", b"fn main() {}");
+        create_test_file(root, "README.md", b"# Hello");
+        // Hidden file that should be kept (unless ignored by gitignore)
+        create_test_file(root, ".env", b"SECRET=123");
+
+        // Hardcoded artifacts (should be ignored by is_build_artifact)
+        create_test_file(root, "target/debug/app.exe", b"binary");
+        create_test_file(root, "node_modules/react/index.js", b"module");
+        create_test_file(root, ".git/HEAD", b"ref: refs/heads/main");
+        create_test_file(root, ".vscode/settings.json", b"{}");
+
+        // Gitignore logic
+        create_test_file(root, ".gitignore", b"*.log\n/temp/");
+        create_test_file(root, "error.log", b"error content"); // Should be ignored by *.log
+        create_test_file(root, "temp/cache.bin", b"cache"); // Should be ignored by /temp/
+
+        // 3. Execute Scan
+        let config = ScanConfig::new(root);
+        let files = scan_files(&config).expect("Scan failed");
+
+        // 4. Verification
+        // Convert paths to relative strings for easier assertion
+        let relative_paths: Vec<String> = files
+            .iter()
+            .map(|p| {
+                p.strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+
+        // Assertions:
+        // SHOULD contain:
+        assert!(
+            relative_paths.contains(&"src/main.rs".to_string()),
+            "Missing src/main.rs"
+        );
+        assert!(
+            relative_paths.contains(&"README.md".to_string()),
+            "Missing README.md"
+        );
+        assert!(relative_paths.contains(&".env".to_string()), "Missing .env");
+        assert!(
+            relative_paths.contains(&".gitignore".to_string()),
+            "Missing .gitignore"
+        ); // We allowed hidden files, so .gitignore itself should be packed
+
+        // SHOULD NOT contain (Hardcoded filters):
+        assert!(
+            !relative_paths.iter().any(|p| p.contains("target")),
+            "Should exclude target"
+        );
+        assert!(
+            !relative_paths.iter().any(|p| p.contains("node_modules")),
+            "Should exclude node_modules"
+        );
+        assert!(
+            !relative_paths.iter().any(|p| p.contains(".git/")),
+            "Should exclude .git"
+        );
+        assert!(
+            !relative_paths.iter().any(|p| p.contains(".vscode")),
+            "Should exclude .vscode"
+        );
+
+        // SHOULD NOT contain (Gitignore filters):
+        assert!(
+            !relative_paths.contains(&"error.log".to_string()),
+            "Should respect *.log in gitignore"
+        );
+        assert!(
+            !relative_paths.contains(&"temp/cache.bin".to_string()),
+            "Should respect /temp/ in gitignore"
+        );
+    }
+
+    #[test]
+    fn test_pack_integrity_and_round_trip() {
+        // 1. Setup
+        let temp_dir = tempdir().unwrap();
+        let root = temp_dir.path();
+        let output_zip_path = temp_dir.path().join("test_archive.zip");
+
+        // Create some files with distinct content
+        let file1_content = "Rust is awesome!";
+        let file2_content = vec![0u8; 1024 * 10]; // 10KB dummy binary data
+
+        create_test_file(root, "src/lib.rs", file1_content.as_bytes());
+        create_test_file(root, "assets/data.bin", &file2_content);
+
+        // Create a deep directory structure
+        create_test_file(root, "a/b/c/d/deep.txt", b"Deep file");
+
+        // 2. Scan
+        let config = ScanConfig::new(root);
+        let files = scan_files(&config).unwrap();
+        assert_eq!(files.len(), 3);
+
+        // 3. Pack (Test the pack_files function)
+        pack_files(
+            &files,
+            root,
+            &output_zip_path,
+            |_, _, _| {}, // Empty progress callback
+        )
+        .expect("Packing failed");
+
+        assert!(output_zip_path.exists(), "Zip file was not created");
+
+        // 4. Verify Integrity (Unzip and Compare)
+        let zip_file = File::open(&output_zip_path).unwrap();
+        let mut archive = ZipArchive::new(zip_file).unwrap();
+
+        // Check if correct number of files are in zip
+        assert_eq!(archive.len(), 3);
+
+        // Check file 1: Content match
+        let mut f1 = archive
+            .by_name("src/lib.rs")
+            .expect("src/lib.rs missing in zip");
+        let mut buffer = String::new();
+        f1.read_to_string(&mut buffer).unwrap();
+        assert_eq!(buffer, file1_content, "Content mismatch for src/lib.rs");
+        drop(f1); // Release borrow
+
+        // Check file 2: Binary size match
+        let f2 = archive
+            .by_name("assets/data.bin")
+            .expect("assets/data.bin missing");
+        assert_eq!(
+            f2.size(),
+            file2_content.len() as u64,
+            "Size mismatch for binary file"
+        );
+        drop(f2);
+
+        // Check file 3: Path normalization (Windows backslash handling)
+        // zip crate standardizes to forward slash, ensure our code did that
+        let filenames: Vec<_> = archive.file_names().collect();
+        assert!(
+            filenames.contains(&"a/b/c/d/deep.txt"),
+            "Deep path not preserved or normalized incorrectly"
+        );
+
+        // 5. Cleanup
+        // The `temp_dir` object (from tempfile crate) automatically deletes
+        // the directory and all contents when it goes out of scope here.
+        // No manual deletion needed.
+    }
 }

@@ -88,7 +88,7 @@ fn main() -> Result<()> {
 
     // 内存中保存 Top N 最大文件 (大小, 相对路径字符串)
     // 预分配容量稍微大一点避免频繁扩容
-    let mut top_files: Vec<(usize, String)> = Vec::with_capacity(args.top + 1);
+    let mut top_files: Vec<(u64, String)> = Vec::with_capacity(args.top + 1);
 
     pack_files(
         &files,
@@ -138,10 +138,10 @@ fn main() -> Result<()> {
 }
 
 // 简单的辅助函数：格式化字节大小
-fn format_size(bytes: usize) -> String {
-    const KB: usize = 1024;
-    const MB: usize = 1024 * 1024;
-    const GB: usize = 1024 * 1024 * 1024;
+fn format_size(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * 1024;
+    const GB: u64 = 1024 * 1024 * 1024;
 
     if bytes >= GB {
         format!("{:.2} GB", bytes as f64 / GB as f64)

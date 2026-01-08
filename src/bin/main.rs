@@ -1,39 +1,37 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
-use srcpack::{pack_files, scan_files, ScanConfig};
-use std::path::{PathBuf};
+use srcpack::{ScanConfig, pack_files, scan_files};
+use std::path::PathBuf;
 use std::time::Duration;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// 要扫描的根目录，默认为当前目录
+    /// Root directory to scan
     #[arg(default_value = ".")]
     path: PathBuf,
 
-    /// 指定输出文件名 (可选)
+    /// Output zip file path
     #[arg(short, long)]
     output: Option<PathBuf>,
 
-    /// 预演模式：只打印文件列表，不进行压缩
+    /// Dry run: Scan and analyze files without creating a zip
     #[arg(long, short = 'd')]
     dry_run: bool,
 
-    /// 结束后显示最大的 N 个文件
-    #[arg(long, default_value_t = 10)]
+    /// Show the top N the largest files (only works in dry-run mode or after compression)
+    #[arg(long, default_value_t = 0)]
     top: usize,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    // 获取绝对路径，方便后续处理
     let root_path = std::fs::canonicalize(&args.path)
-        .with_context(|| format!("无法访问目录: {:?}", args.path))?;
+        .with_context(|| format!("Cannot access directory: {:?}", args.path))?;
 
-    // 1. 设置扫描时的 Spinner (转圈圈)
-    // 这是一个未定长度的进度条，适合扫描过程
+    // --- Scanning ---
     let scan_spinner = ProgressBar::new_spinner();
     scan_spinner.set_style(
         ProgressStyle::default_spinner()
@@ -41,28 +39,59 @@ fn main() -> Result<()> {
             .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
     );
     scan_spinner.set_message(format!(
-        "正在扫描: {:?}",
+        "Scanning: {:?}",
         root_path.file_name().unwrap_or_default()
     ));
-    scan_spinner.enable_steady_tick(Duration::from_millis(100)); // 让它动起来
+    scan_spinner.enable_steady_tick(Duration::from_millis(100));
 
-    // 执行扫描
     let config = ScanConfig::new(&root_path);
     let files = scan_files(&config)?;
 
-    // 扫描完成，结束 Spinner
-    scan_spinner.finish_with_message(format!("扫描完成，发现 {} 个文件", files.len()));
+    scan_spinner.finish_with_message(format!("Found {} files.", files.len()));
 
+    if args.top > 0 && !args.dry_run {
+        // return an error if --top is used without --dry-run
+        return Err(anyhow::anyhow!(
+            "--top option can only be used with --dry-run"
+        ));
+    }
+
+    // --- Dry Run / Analysis Mode ---
     if args.dry_run {
-        println!("--- 文件列表 (Dry Run) ---");
-        for file in files {
-            // 这里为了显示好看，我们可以把绝对路径转回相对路径显示
-            let display_path = file.strip_prefix(&root_path).unwrap_or(&file);
-            println!("{}", display_path.display());
+        println!("\n--- Dry Run Mode (No Zip Created) ---");
+
+        let mut file_stats = Vec::with_capacity(files.len());
+        let mut total_size: u64 = 0;
+
+        // Calculate sizes quickly
+        for file in &files {
+            let size = std::fs::metadata(file).map(|m| m.len()).unwrap_or(0);
+            total_size += size;
+            file_stats.push((size, file));
         }
+
+        // Print all files (standard behavior)
+        // User can pipe this to 'more' or 'less'
+        if args.top == 0 {
+            for (_, file) in &file_stats {
+                let display_path = file.strip_prefix(&root_path).unwrap_or(file);
+                println!("{}", display_path.display());
+            }
+        }
+
+        println!("\nTotal size: {}", format_size(total_size));
+
+        // If top is specified, show the analysis
+        if args.top > 0 {
+            print_top_files(&mut file_stats, args.top, &root_path);
+        } else {
+            println!("Tip: Use '--top 10' with '--dry-run' to see the largest files.");
+        }
+
         return Ok(());
     }
 
+    // --- Compression Mode ---
     let output_path = match args.output {
         Some(p) => p,
         None => {
@@ -74,42 +103,26 @@ fn main() -> Result<()> {
         }
     };
 
-    println!("准备压缩到: {:?}", output_path.file_name().unwrap());
+    println!("Compressing to: {:?}", output_path.file_name().unwrap());
 
-    // 设置压缩时的进度条
     let bar = ProgressBar::new(files.len() as u64);
     bar.set_style(
         ProgressStyle::with_template(
-            // [耗时] [进度条] 进度/总数 百分比 (预计剩余时间) 当前文件
             "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {percent}% (ETA: {eta}) {msg}",
         )?
-            .progress_chars("##-"),
+        .progress_chars("##-"),
     );
-
-    // 内存中保存 Top N 最大文件 (大小, 相对路径字符串)
-    // 预分配容量稍微大一点避免频繁扩容
-    let mut top_files: Vec<(u64, String)> = Vec::with_capacity(args.top + 1);
 
     pack_files(
         &files,
         &root_path,
         &output_path,
-        |path_buf, current_size, total_size| {
+        |path_buf, _, total_size| {
             let relative_path = path_buf.strip_prefix(&root_path).unwrap_or(path_buf);
             let relative_path_str = relative_path.to_string_lossy().to_string();
 
-            if args.top > 0 {
-                top_files.push((current_size, relative_path_str.clone()));
-                // 降序排序：大文件在前
-                top_files.sort_by(|a, b| b.0.cmp(&a.0));
-                // 保持只有 Top N
-                if top_files.len() > args.top {
-                    top_files.truncate(args.top);
-                }
-            }
-
             bar.set_message(format!(
-                "{} | 总计: {}",
+                "{} | Total: {}",
                 relative_path_str,
                 format_size(total_size)
             ));
@@ -118,26 +131,31 @@ fn main() -> Result<()> {
         },
     )?;
 
-    bar.finish_with_message("压缩完成！");
-
-    println!("\n✨ 成功！文件已保存至: {}", output_path.display());
-
-    if !top_files.is_empty() {
-        println!("\n📊 占用空间最大的 {} 个文件 (建议检查是否需要加入 .gitignore):", top_files.len());
-        println!("{:-<60}", ""); // 分割线
-        println!("{:<10} | {}", "大小", "文件路径");
-        println!("{:-<60}", "");
-
-        for (size, path) in top_files {
-            println!("{:<12} | {}", format_size(size), path);
-        }
-        println!("{:-<60}", "");
-    }
+    bar.finish_with_message("Done!");
+    println!("\n✨ Success! Saved to: {}", output_path.display());
 
     Ok(())
 }
 
-// 简单的辅助函数：格式化字节大小
+fn print_top_files(files: &mut Vec<(u64, &PathBuf)>, n: usize, root: &PathBuf) {
+    // Sort descending by size
+    files.sort_by(|a, b| b.0.cmp(&a.0));
+
+    let count = n.min(files.len());
+
+    println!("\n📊 Largest {} files (Analysis):", count);
+    println!("{:-<60}", "");
+    println!("{:<12} | {}", "Size", "File Path");
+    println!("{:-<60}", "");
+
+    for i in 0..count {
+        let (size, path) = files[i];
+        let relative_path = path.strip_prefix(root).unwrap_or(path);
+        println!("{:<12} | {}", format_size(size), relative_path.display());
+    }
+    println!("{:-<60}", "");
+}
+
 fn format_size(bytes: u64) -> String {
     const KB: u64 = 1024;
     const MB: u64 = 1024 * 1024;

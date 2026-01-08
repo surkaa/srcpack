@@ -1,35 +1,35 @@
 # srcpack
 
-**srcpack** 一个极速的命令行工具，用于将源代码打包成 ZIP 文件，同时遵循 `.gitignore` 规则。
+**srcpack** is a blazing fast CLI tool to pack source code into a ZIP file, automatically respecting `.gitignore` rules.
 
-可以帮你彻底告别手动排除 `node_modules`、`target` 或 `.git` 目录的烦恼，让代码备份和分享变得轻而易举。
+It helps you back up or share your code without manually excluding `node_modules`, `target`, or `.git` folders.
 
-## 安装
+## Installation
 
 ```bash
 cargo install srcpack
 ```
 
-## 使用方法
+## Usage
 
-在项目根目录下直接运行：
+Run inside your project directory:
 
 ```bash
 srcpack
 ```
 
-### 常用选项
+### Options
 
 ```bash
-# 打包指定目录
+# Pack a specific directory
 srcpack path/to/project
 
-# 仅预览将被打包的文件列表（不进行压缩）
-srcpack --dry-run
-
-# 指定输出文件名
+# Specify output filename
 srcpack --output my-backup.zip
 
-# 打包后列出体积最大的 20 个文件（辅助优化 .gitignore）
-srcpack --top 20
+# Analyze mode: Dry run to list files without zipping
+srcpack --dry-run
+
+# Analyze mode + Top files: Find the largest space consumers
+srcpack --dry-run --top 20
 ```

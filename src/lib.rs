@@ -82,7 +82,7 @@ pub fn scan_files(config: &ScanConfig) -> Result<Vec<PathBuf>> {
                 }
             }
             Err(err) => {
-                eprintln!("扫描出错: {}", err);
+                eprintln!("Scan warning: {}", err);
             }
         }
     }
@@ -129,7 +129,7 @@ where
     F: FnMut(&PathBuf, u64, u64) -> (),
 {
     let file = File::create(output_path)
-        .with_context(|| format!("无法创建输出文件: {:?}", output_path))?;
+        .with_context(|| format!("Failed to create output file: {:?}", output_path))?;
 
     // 使用带缓冲区的写入器，提高写入性能
     let buf_writer = BufWriter::with_capacity(1024 * 1024, file);

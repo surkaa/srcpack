@@ -1,0 +1,24 @@
+[package]
+name = "srcpack"
+version = "0.1.0"
+edition = "2024"
+
+# 定义库
+[lib]
+name = "srcpack"
+path = "src/lib.rs"
+
+# 定义二进制文件
+[[bin]]
+name = "srcpack"
+path = "src/bin/main.rs"
+
+[dependencies]
+# 核心业务依赖
+ignore = "0.4"          # 强大的文件扫描，支持 gitignore 和多线程
+zip = "0.6"              # ZIP 压缩
+
+# 命令行与工具依赖
+clap = { version = "4.4", features = ["derive"] } # 命令行参数解析
+anyhow = "1.0"          # 错误处理
+indicatif = "0.17"      # 进度条

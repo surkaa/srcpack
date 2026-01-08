@@ -2,6 +2,13 @@
 name = "srcpack"
 version = "0.1.0"
 edition = "2024"
+authors = ["SurKaa <surkaa67@gmail.com>"]
+description = "A fast CLI tool to pack source code into a zip file, respecting `.gitignore`."
+license = "MIT"
+repository = "https://github.com/surkaa/srcpack"
+readme = "README.md"
+keywords = ["zip", "backup", "gitignore", "cli", "archiver"]
+categories = ["command-line-utilities", "compression"]
 
 # 定义库
 [lib]

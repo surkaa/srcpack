@@ -1,6 +1,6 @@
 use ignore::WalkBuilder;
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use zip::write::FileOptions;
@@ -77,8 +77,10 @@ where
 {
     let file = File::create(output_path)
         .with_context(|| format!("无法创建输出文件: {:?}", output_path))?;
+    // 使用带缓冲区的写入器，提高写入性能
+    let buf_writer = BufWriter::with_capacity(1024 * 1024, file);
 
-    let mut zip = zip::ZipWriter::new(file);
+    let mut zip = zip::ZipWriter::new(buf_writer);
     // 设置压缩选项：默认使用 Deflated (标准压缩算法)
     let options = FileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)

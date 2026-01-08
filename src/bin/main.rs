@@ -76,8 +76,8 @@ fn main() -> Result<()> {
         let bar = ProgressBar::new(files.len() as u64);
         bar.set_style(
             ProgressStyle::with_template(
-                // 耗时 [进度条] 当前/总数 信息
-                "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}",
+                // 耗时 [进度条] 当前/总数 信息 预计剩余时间
+                "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg} (ETA: {eta})",
             )?
             .progress_chars("##-"),
         );

@@ -1,12 +1,12 @@
 use anyhow::{Context, Result};
+use ignore::overrides::OverrideBuilder;
 use ignore::WalkBuilder;
 use std::fs::File;
 use std::io::BufWriter;
-use std::path::{Path, PathBuf};
-use zip::write::FileOptions;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use ignore::overrides::OverrideBuilder;
+use std::path::{Path, PathBuf};
+use zip::write::SimpleFileOptions;
 use zip::CompressionMethod;
 
 /// Configuration for the file scanning process.
@@ -32,7 +32,7 @@ pub struct PackConfig {
     pub output_path: PathBuf,
     pub compression_method: CompressionMethod,
     // None Use the default, some(0-9) to specify the level
-    pub compression_level: Option<i32>,
+    pub compression_level: Option<i64>,
 }
 
 /// Scans the directory specified in the configuration and returns a list of files to include.
@@ -159,7 +159,7 @@ where
     let mut zip = zip::ZipWriter::new(buf_writer);
 
     // Set compression options: Default to Deflated (standard compression)
-    let options = FileOptions::default()
+    let options = SimpleFileOptions::default()
         .compression_method(CompressionMethod::Deflated)
         .compression_level(config.compression_level)
         .large_file(true); // Enable ZIP64 for large files

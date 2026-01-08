@@ -32,6 +32,10 @@ struct Args {
     /// This option will list the largest files found to help you identify what is taking up space.
     #[arg(long, default_value_t = 0, requires = "dry_run")]
     top: usize,
+
+    /// Manually exclude patterns (e.g. "*.mp4", "secrets/")
+    #[arg(long, short = 'x')]
+    exclude: Vec<String>,
 }
 
 fn main() -> Result<()> {
@@ -53,11 +57,10 @@ fn main() -> Result<()> {
     ));
     scan_spinner.enable_steady_tick(Duration::from_millis(100));
 
-    let config = ScanConfig::new(&root_path);
+    let config = ScanConfig::new(&root_path, args.exclude);
     let files = scan_files(&config)?;
 
     scan_spinner.finish_with_message(format!("Found {} files.", files.len()));
-
 
     // --- Dry Run / Analysis Mode ---
     if args.dry_run {

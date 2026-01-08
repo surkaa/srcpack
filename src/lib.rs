@@ -6,18 +6,22 @@ use std::path::{Path, PathBuf};
 use zip::write::FileOptions;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+use ignore::overrides::OverrideBuilder;
 
 /// Configuration for the file scanning process.
 pub struct ScanConfig {
     /// The root directory from which the scan will start.
     pub root_path: PathBuf,
+    /// Optional patterns to exclude from the scan.
+    pub exclude_patterns: Vec<String>,
 }
 
 impl ScanConfig {
     /// Creates a new `ScanConfig` with the specified root path.
-    pub fn new(path: impl Into<PathBuf>) -> Self {
+    pub fn new(path: impl Into<PathBuf>, excludes: Vec<String>) -> Self {
         Self {
             root_path: path.into(),
+            exclude_patterns: excludes,
         }
     }
 }
@@ -49,9 +53,20 @@ impl ScanConfig {
 pub fn scan_files(config: &ScanConfig) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
 
+    let mut overrides = OverrideBuilder::new(&config.root_path);
+    for pattern in &config.exclude_patterns {
+        // ignore crate 的规则是：!pattern 表示忽略
+        // 所以如果用户输入 "*.mp4"，我们需要转为 "!*.mp4" 告诉 builder 这是一个负面规则
+        // 或者直接使用 builder.add("!*.mp4")
+        let glob = format!("!{}", pattern);
+        overrides.add(&glob).context("Invalid exclude pattern")?;
+    }
+    let override_matched = overrides.build()?;
+
     // WalkBuilder is the core builder from the ignore crate
     let walker = WalkBuilder::new(&config.root_path)
         .standard_filters(true) // Automatically read .gitignore, .git/info/exclude, etc.
+        .overrides(override_matched) // Apply user-defined exclude patterns
         .require_git(false) // Do not require a git repository to work
         .hidden(false) // Include hidden files (like .env), though specific ones are filtered later
         .build();
@@ -249,7 +264,7 @@ mod tests {
         create_test_file(root, "temp/cache.bin", b"cache"); // Should be ignored by /temp/
 
         // 3. Execute Scan
-        let config = ScanConfig::new(root);
+        let config = ScanConfig::new(root, vec![]);
         let files = scan_files(&config).expect("Scan failed");
 
         // 4. Verification
@@ -327,7 +342,7 @@ mod tests {
         create_test_file(root, "a/b/c/d/deep.txt", b"Deep file");
 
         // 2. Scan
-        let config = ScanConfig::new(root);
+        let config = ScanConfig::new(root, vec![]);
         let files = scan_files(&config).unwrap();
         assert_eq!(files.len(), 3);
 

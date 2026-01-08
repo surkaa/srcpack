@@ -1,7 +1,7 @@
 [package]
 name = "srcpack"
-version = "0.2.0"
-edition = "2024"
+version = "0.2.1"
+edition = "2021"
 authors = ["SurKaa <surkaa67@gmail.com>"]
 description = "A fast CLI tool to pack source code into a zip file, respecting `.gitignore`."
 license = "MIT OR Apache-2.0"

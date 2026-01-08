@@ -1,13 +1,13 @@
 use anyhow::{Context, Result};
-use ignore::overrides::OverrideBuilder;
 use ignore::WalkBuilder;
+use ignore::overrides::OverrideBuilder;
 use std::fs::File;
 use std::io::BufWriter;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use zip::write::SimpleFileOptions;
 use zip::CompressionMethod;
+use zip::write::SimpleFileOptions;
 
 /// Configuration for the file scanning process.
 pub struct ScanConfig {
@@ -143,11 +143,7 @@ pub fn scan_files(config: &ScanConfig) -> Result<Vec<PathBuf>> {
 ///     println!("Packed {:?} ({} bytes)", path, size);
 /// }).expect("Failed to pack files");
 /// ```
-pub fn pack_files<F>(
-    files: &[PathBuf],
-    config: &PackConfig,
-    mut on_progress: F,
-) -> Result<()>
+pub fn pack_files<F>(files: &[PathBuf], config: &PackConfig, mut on_progress: F) -> Result<()>
 where
     F: FnMut(&PathBuf, u64, u64) -> (),
 {
@@ -459,9 +455,18 @@ mod tests {
             .collect();
 
         // --- Positive Assertions (What should be there) ---
-        assert!(relative_paths.contains(&"src/main.rs".to_string()), "Standard file should be present");
-        assert!(relative_paths.contains(&"assets/logo.png".to_string()), "Non-excluded asset should be present");
-        assert!(relative_paths.contains(&"docs/readme.txt".to_string()), "Docs should be present");
+        assert!(
+            relative_paths.contains(&"src/main.rs".to_string()),
+            "Standard file should be present"
+        );
+        assert!(
+            relative_paths.contains(&"assets/logo.png".to_string()),
+            "Non-excluded asset should be present"
+        );
+        assert!(
+            relative_paths.contains(&"docs/readme.txt".to_string()),
+            "Docs should be present"
+        );
 
         // --- Negative Assertions (What should be gone) ---
         // Verify *.mp4 is gone

@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
-use srcpack::{ScanConfig, pack_files, scan_files, PackConfig};
+use srcpack::{PackConfig, ScanConfig, pack_files, scan_files};
 use std::path::PathBuf;
 use std::time::Duration;
 use zip::CompressionMethod;
@@ -166,24 +166,20 @@ fn main() -> Result<()> {
         .progress_chars("##-"),
     );
 
-    pack_files(
-        &files,
-        &pack_config,
-        |path_buf, _, total_size| {
-            let relative_path = path_buf.strip_prefix(&root_path).unwrap_or(path_buf);
-            let relative_path_str = relative_path.to_string_lossy().to_string();
+    pack_files(&files, &pack_config, |path_buf, _, total_size| {
+        let relative_path = path_buf.strip_prefix(&root_path).unwrap_or(path_buf);
+        let relative_path_str = relative_path.to_string_lossy().to_string();
 
-            let display_name = truncate(&relative_path_str, 35);
+        let display_name = truncate(&relative_path_str, 35);
 
-            bar.set_message(format!(
-                "{} | Total: {}",
-                display_name,
-                format_size(total_size)
-            ));
+        bar.set_message(format!(
+            "{} | Total: {}",
+            display_name,
+            format_size(total_size)
+        ));
 
-            bar.inc(1);
-        },
-    )?;
+        bar.inc(1);
+    })?;
 
     bar.finish_with_message("Done!");
     println!("\n✨ Success! Saved to: {}", output_path.display());

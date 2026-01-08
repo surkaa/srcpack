@@ -63,9 +63,18 @@ pub fn scan_files(config: &ScanConfig) -> Result<Vec<PathBuf>> {
 /// * `files` - 需要压缩的文件路径列表
 /// * `root_path` - 根路径，用于计算相对路径
 /// * `output_path` - 输出的 Zip 文件路径
+/// * `on_progress` - 进度回调函数，每处理一个文件调用一次
 /// # Returns
 /// * `Result<()>` - 成功时返回空，失败时返回错误
-pub fn pack_files(files: &[PathBuf], root_path: &Path, output_path: &Path) -> Result<()> {
+pub fn pack_files<F>(
+    files: &[PathBuf],
+    root_path: &Path,
+    output_path: &Path,
+    on_progress: F
+) -> Result<()>
+where
+    F: Fn()
+{
     let file = File::create(output_path)
         .with_context(|| format!("无法创建输出文件: {:?}", output_path))?;
 
@@ -95,6 +104,8 @@ pub fn pack_files(files: &[PathBuf], root_path: &Path, output_path: &Path) -> Re
         buffer.clear();
         f.read_to_end(&mut buffer)?;
         zip.write_all(&buffer)?;
+
+        on_progress();
     }
 
     // 完成写入

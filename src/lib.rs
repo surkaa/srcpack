@@ -53,7 +53,7 @@ pub struct PackConfig {
 /// ```no_run
 /// use srcpack::{ScanConfig, scan_files};
 ///
-/// let config = ScanConfig::new(".", vec![String::from("*.mp4")]);
+/// let config = ScanConfig::new(".", vec![String::from("*.mp4"), String::from("!special-include.mp4")]);
 /// match scan_files(&config) {
 ///     Ok(files) => println!("Found {} files respecting .gitignore", files.len()),
 ///     Err(e) => eprintln!("Error scanning directory: {}", e),
@@ -64,11 +64,15 @@ pub fn scan_files(config: &ScanConfig) -> Result<Vec<PathBuf>> {
 
     let mut overrides = OverrideBuilder::new(&config.root_path);
     for pattern in &config.exclude_patterns {
-        // ignore crate 的规则是：!pattern 表示忽略
-        // 所以如果用户输入 "*.mp4"，我们需要转为 "!*.mp4" 告诉 builder 这是一个负面规则
-        // 或者直接使用 builder.add("!*.mp4")
-        let glob = format!("!{}", pattern);
-        overrides.add(&glob).context("Invalid exclude pattern")?;
+        if let Some(whitelist_pattern) = pattern.strip_prefix('!') {
+            // Scenario A: User enters "file.txt" (intent: force inclusion/whitelisting)
+            // Action: Remove "!", pass directly to the builder.
+            overrides.add(whitelist_pattern).context("Invalid include pattern")?;
+        } else {
+            // Scenario B: User enters "file.txt" (intent: exclude/ignore)
+            // Action: Manually add "!".
+            overrides.add(&format!("!{}", pattern)).context("Invalid exclude pattern")?;
+        }
     }
     let override_matched = overrides.build()?;
 
@@ -233,7 +237,7 @@ fn is_build_artifact(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::{self, File};
+    use std::fs::{File, create_dir_all};
     use std::io::{Read, Write};
     use tempfile::tempdir;
     use zip::ZipArchive;
@@ -242,7 +246,7 @@ mod tests {
     fn create_test_file(dir: &Path, name: &str, content: &[u8]) {
         let path = dir.join(name);
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).unwrap();
+            create_dir_all(parent).unwrap();
         }
         let mut f = File::create(path).unwrap();
         f.write_all(content).unwrap();
@@ -331,6 +335,49 @@ mod tests {
         assert!(
             !relative_paths.contains(&"temp/cache.bin".to_string()),
             "Should respect /temp/ in gitignore"
+        );
+    }
+
+    #[test]
+    fn test_scan_whitelist_overrides() {
+        // Setup
+        let temp_dir = tempdir().unwrap();
+        let root = temp_dir.path();
+
+        // Create files
+        create_test_file(root, "include_me.mp4", b"video content");
+        create_test_file(root, "ignore_me.mp4", b"video content");
+
+        // .gitignore ignore all mp4
+        create_test_file(root, ".gitignore", b"*.mp4");
+
+        // Execute Scan
+        // User intuition: Use "!" to indicate "I want this file, don't care what gitignore says"
+        let config = ScanConfig::new(root, vec!["!include_me.mp4".to_string()]);
+
+        let files = scan_files(&config).expect("Scan failed");
+
+        // Verification
+        let relative_paths: Vec<String> = files
+            .iter()
+            .map(|p| {
+                p.strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+
+        dbg!(&relative_paths);
+
+        assert!(
+            relative_paths.contains(&"include_me.mp4".to_string()),
+            "Failed to include whitelisted file"
+        );
+
+        assert!(
+            !relative_paths.contains(&"ignore_me.mp4".to_string()),
+            "Should not include other mp4 files"
         );
     }
 

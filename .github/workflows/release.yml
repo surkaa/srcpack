@@ -110,12 +110,8 @@ jobs:
         shell: bash
         run: |
           cd target/${{ matrix.target }}/release
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            mv ${{ matrix.artifact_name }} ${{ matrix.asset_name }}
-          else
-            mv ${{ matrix.artifact_name }} ${{ matrix.asset_name }}
-            chmod +x ${{ matrix.asset_name }}
-          fi
+          mv ${{ matrix.artifact_name }} ${{ matrix.asset_name }}
+          chmod +x ${{ matrix.asset_name }} || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -137,9 +133,6 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-
-      - name: Display structure of downloaded files
-        run: ls -R artifacts
 
       - name: Create Release
         id: create_release

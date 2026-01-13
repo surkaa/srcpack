@@ -255,7 +255,12 @@ mod tests {
         create_test_file(root, "temp/cache.bin", b"cache"); // Should be ignored by /temp/
 
         // 3. Execute Scan
-        let config = ScanConfig::new(root, vec![]);
+        let config = ScanConfig::new(root, vec![
+            String::from(".git"),
+            String::from("node_modules"),
+            String::from("target"),
+            String::from(".vscode"),
+        ]);
         let files = scan_files(&config).expect("Scan failed");
 
         // 4. Verification

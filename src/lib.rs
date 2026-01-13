@@ -1,13 +1,13 @@
 use anyhow::{Context, Result};
-use ignore::WalkBuilder;
 use ignore::overrides::OverrideBuilder;
+use ignore::WalkBuilder;
 use std::fs::File;
 use std::io::BufWriter;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
-use zip::CompressionMethod;
+use std::path::PathBuf;
 use zip::write::SimpleFileOptions;
+use zip::CompressionMethod;
 
 /// Configuration for the file scanning process.
 pub struct ScanConfig {
@@ -67,11 +67,15 @@ pub fn scan_files(config: &ScanConfig) -> Result<Vec<PathBuf>> {
         if let Some(whitelist_pattern) = pattern.strip_prefix('!') {
             // Scenario A: User enters "file.txt" (intent: force inclusion/whitelisting)
             // Action: Remove "!", pass directly to the builder.
-            overrides.add(whitelist_pattern).context("Invalid include pattern")?;
+            overrides
+                .add(whitelist_pattern)
+                .context("Invalid include pattern")?;
         } else {
             // Scenario B: User enters "file.txt" (intent: exclude/ignore)
             // Action: Manually add "!".
-            overrides.add(&format!("!{}", pattern)).context("Invalid exclude pattern")?;
+            overrides
+                .add(&format!("!{}", pattern))
+                .context("Invalid exclude pattern")?;
         }
     }
     let override_matched = overrides.build()?;
@@ -91,11 +95,6 @@ pub fn scan_files(config: &ScanConfig) -> Result<Vec<PathBuf>> {
 
                 // Filter out directories; we only collect files
                 if path.is_file() {
-                    // Apply hardcoded blacklist for common heavy directories
-                    if is_build_artifact(path) {
-                        continue;
-                    }
-
                     files.push(path.to_path_buf());
                 }
             }
@@ -211,34 +210,12 @@ where
     Ok(())
 }
 
-/// Checks if a path belongs to a common build artifact or dependency directory.
-///
-/// This serves as a secondary hard-coded filter to ensure folders like `node_modules`
-/// or `target` are never included, even if .gitignore is missing.
-fn is_build_artifact(path: &Path) -> bool {
-    // Check if the path component contains common build directory names
-    for component in path.components() {
-        if let Some(s) = component.as_os_str().to_str() {
-            if s == "node_modules"
-                || s == "target"
-                || s == "build"
-                || s == "dist"
-                || s == ".git"
-                || s == ".idea"
-                || s == ".vscode"
-            {
-                return true;
-            }
-        }
-    }
-    false
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::{File, create_dir_all};
+    use std::fs::{create_dir_all, File};
     use std::io::{Read, Write};
+    use std::path::Path;
     use tempfile::tempdir;
     use zip::ZipArchive;
 
